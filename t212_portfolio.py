@@ -6,8 +6,8 @@ Vse funkcije pošiljajo le GET zahteve na uradni Trading 212 Public API:
   /equity/account/summary  -> gotovina, vrednost naložb, dobiček/izguba
   /equity/positions        -> odprte pozicije
 
-V kodi ni nobenega POST/PUT/DELETE klica: skripta ne more oddati, spremeniti
-ali preklicati naročila.
+Ta datoteka sama ne oddaja naročil. Nakup in prodaja (z varovalkami) sta
+ločena v t212_trgovanje.py.
 
 Ključ in skrivnost bere iz datoteke .env v isti mapi (ali iz okoljskih spremenljivk):
   API_KEY          - API ključ (obvezno)
@@ -76,28 +76,37 @@ def _glava_avtentikacije():
     return kljuc
 
 
-def _get(pot):
-    """Edini klic na API. Vedno samo GET = samo branje."""
+def _klic(pot, metoda="GET", telo=None):
+    """Klic na API. Ta datoteka uporablja samo GET; POST/DELETE kliče le t212_trgovanje.py."""
     okolje = os.environ.get("T212_OKOLJE", "live").strip().lower() or "live"
     if okolje not in OSNOVNI_URL:
         raise T212Napaka('T212_OKOLJE mora biti "live" ali "demo".')
-    zahteva = urllib.request.Request(
-        OSNOVNI_URL[okolje] + pot,
-        method="GET",
-        headers={"Authorization": _glava_avtentikacije(), "Accept": "application/json"},
-    )
+    podatki = json.dumps(telo).encode() if telo is not None else None
+    glave = {"Authorization": _glava_avtentikacije(), "Accept": "application/json"}
+    if podatki is not None:
+        glave["Content-Type"] = "application/json"
+    zahteva = urllib.request.Request(OSNOVNI_URL[okolje] + pot, data=podatki, method=metoda, headers=glave)
     try:
         with urllib.request.urlopen(zahteva, timeout=20) as odgovor:
-            return json.loads(odgovor.read().decode())
+            vsebina = odgovor.read().decode()
+            return json.loads(vsebina) if vsebina.strip() else None
     except urllib.error.HTTPError as e:
         razlage = {
             401: "ključ ali skrivnost ni pravilna (ali napačno okolje live/demo).",
-            403: "ključ nima dovoljenja. Vklopi 'Account data' in 'Portfolio'.",
+            403: "ključ nima potrebnega dovoljenja.",
             429: "preveč zahtev naenkrat. Počakaj 10 sekund in poskusi znova.",
         }
-        raise T212Napaka(f"{pot} -> HTTP {e.code}: {razlage.get(e.code, e.reason)}")
+        try:
+            podrobno = e.read().decode()[:300]
+        except Exception:
+            podrobno = ""
+        raise T212Napaka(f"{metoda} {pot} -> HTTP {e.code}: {razlage.get(e.code, e.reason)} {podrobno}".strip())
     except urllib.error.URLError as e:
         raise T212Napaka(f"ni povezave do Trading 212 ({e.reason}).")
+
+
+def _get(pot):
+    return _klic(pot, "GET")
 
 
 # --------------------------------------------------------------------------

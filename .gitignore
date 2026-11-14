@@ -5,6 +5,8 @@
 
 # Lokalna zgodovina stanja (osebni podatki o računu)
 stanje_t212.txt
+bot_dnevnik.json
+bot_dnevnik.json.tmp
 
 __pycache__/
 *.pyc

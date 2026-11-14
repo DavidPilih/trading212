@@ -1,10 +1,10 @@
 # t212-portfolio
 
-Preprosta Python skripta za **branje** stanja Trading 212 računa: skupna vrednost, gotovina in pozicije. Pošilja samo GET zahteve na uradni [Trading 212 API](https://docs.trading212.com/api), v kodi ni ničesar, kar bi oddalo ali preklicalo naročilo. Potrebuje samo standardno knjižnico Pythona 3.
+Python skripti za Trading 212 ([uradni API](https://docs.trading212.com/api)): `t212_portfolio.py` samo bere stanje (vrednost, gotovina, pozicije), `t212_trgovanje.py` kupuje in prodaja z varovalkami. Potrebuje samo standardno knjižnico Pythona 3.
 
 ## Nastavitev
 
-1. V Trading 212 (Settings → API) ustvari ključ z dovoljenji **samo** *Account data* in *Portfolio* (brez "Orders").
+1. V Trading 212 (Settings → API) ustvari ključ. Za samo branje zadostujeta *Account data* in *Portfolio*, za trgovanje še dovoljenje za naročila.
 2. Odpri datoteko `.env` v tej mapi in vpiši ključ in skrivnost:
    ```
    API_KEY=tvoj_kljuc
@@ -30,6 +30,26 @@ import t212_portfolio as t
 t.nalozi_env()
 print(t.preveri_vrednost())
 print(t.preveri_pozicijo("IE00BMC38736"))
+```
+
+## Trgovanje (t212_trgovanje.py)
+
+Nakup in prodaja s trdimi varovalkami v kodi:
+
+- Bot za nakupe **skupaj porabi največ 500 EUR** (`BOT_PRORACUN_EUR` ga lahko samo zniža). Prodaje proračuna ne vračajo.
+- Nakup samo z **limitnim naročilom** za instrument v **EUR**; znesek (količina × limit) se rezervira, preden se naročilo odda.
+- Prodaja samo **delnic, ki jih je kupil bot** (napolnjeni nakupi minus prejšnje prodaje, največ toliko, kot je v poziciji). Ročno kupljenih ali prej obstoječih delnic ne proda.
+- Brez `--potrdi` se nič ne odda, izpiše se le, kaj bi se zgodilo.
+- Dnevnik je v `bot_dnevnik.json` (ni v gitu). **Ne briši ga.**
+
+Ključ mora imeti dovoljenje za naročila. Najprej preizkusi z `T212_OKOLJE=demo`.
+
+```
+python t212_trgovanje.py najdi IE00BFZXGZ54           # poišči poln ticker
+python t212_trgovanje.py stanje                       # proračun in botove pozicije
+python t212_trgovanje.py kupi EQQBd_EQ 0.5 480 --potrdi
+python t212_trgovanje.py prodaj EQQBd_EQ 0.5 --potrdi
+python t212_trgovanje.py preklici <id> --potrdi
 ```
 
 ## Pogoste napake
