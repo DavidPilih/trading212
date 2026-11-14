@@ -1,0 +1,11 @@
+# Skrivnosti: NIKOLI v git
+.env
+.env.*
+!.env.example
+
+# Lokalna zgodovina stanja (osebni podatki o računu)
+stanje_t212.txt
+
+__pycache__/
+*.pyc
+.venv/
