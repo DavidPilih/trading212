@@ -19,7 +19,7 @@ pozabi porabo (proračun bi se ponastavil) in ne bi smel prodati ničesar.
 
 Zagon:
   python t212_trgovanje.py stanje
-  python t212_trgovanje.py kupi EQQBd_EQ 0.5 480.00 [--gtc] --potrdi
+  python t212_trgovanje.py kupi IE00BMC38736 0.5 30.00 [--gtc] --potrdi   (ISIN ali ticker; vedno kupi EUR kotacijo)
   python t212_trgovanje.py prodaj EQQBd_EQ 0.5 --potrdi
   python t212_trgovanje.py preklici <id_narocila> --potrdi
 
@@ -111,6 +111,58 @@ def najdi(oznaka):
             or o in (i.get("name") or "").upper()]
 
 
+def je_isin(oznaka):
+    return len(oznaka) == 12 and oznaka[:2].isalpha() and oznaka[2:].isalnum()
+
+
+def eur_ticker(oznaka):
+    """Vrne ticker kotacije v EUR za ISIN ali ticker (npr. namesto SMH v USD na LSE
+    poišče isti ETF na borzi v EUR). Če EUR kotacije ni, sproži napako."""
+    instrument("")  # naloži seznam
+    if je_isin(oznaka.upper()):
+        isin = oznaka.upper()
+    else:
+        instr = instrument(oznaka)
+        if not instr:
+            raise T212Napaka(f"ticker {oznaka} ne obstaja. Uporabi ISIN ali: python t212_trgovanje.py najdi <ISIN>")
+        if (instr.get("currencyCode") or instr.get("currency")) == "EUR":
+            return oznaka
+        isin = (instr.get("isin") or "").upper()
+    kandidati = sorted(
+        (i for i in _instrumenti.values()
+         if (i.get("isin") or "").upper() == isin and (i.get("currencyCode") or i.get("currency")) == "EUR"),
+        key=lambda i: i.get("ticker") or "",
+    )
+    if not kandidati:
+        raise T212Napaka(f"za {oznaka} ({isin}) na Trading 212 ni kotacije v EUR, zato ga bot ne kupi.")
+    return kandidati[0]["ticker"]
+
+
+def obvesti(zadeva, besedilo):
+    """Pošlje e-pošto prek Gmaila (GMAIL_USER, GMAIL_APP_PASSWORD v .env). Napaka ne ustavi bota."""
+    uporabnik = os.environ.get("GMAIL_USER", "").strip()
+    geslo = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
+    prejemnik = os.environ.get("GMAIL_TO", "").strip() or uporabnik
+    if not uporabnik or not geslo:
+        print("(Obvestilo ni poslano: v .env manjka GMAIL_USER ali GMAIL_APP_PASSWORD.)", file=sys.stderr)
+        return False
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        sporocilo = EmailMessage()
+        sporocilo["Subject"] = "[T212 bot] " + zadeva
+        sporocilo["From"] = uporabnik
+        sporocilo["To"] = prejemnik
+        sporocilo.set_content(besedilo + "\n\n" + _zdaj() + f" | okolje: {os.environ.get('T212_OKOLJE', 'live')}")
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as s:
+            s.login(uporabnik, geslo)
+            s.send_message(sporocilo)
+        return True
+    except Exception as e:
+        print(f"(Obvestilo ni poslano: {e})", file=sys.stderr)
+        return False
+
+
 def _podatki_narocila(n):
     """Zgodovina vrača naročilo plosko ali pod ključem 'order'."""
     return n.get("order", n) if isinstance(n, dict) else {}
@@ -166,9 +218,9 @@ def kupi(ticker, kolicina, limitna_cena, gtc=False, potrdi=False):
     kolicina, limitna_cena = float(kolicina), float(limitna_cena)
     if kolicina <= 0 or limitna_cena <= 0:
         raise T212Napaka("količina in limitna cena morata biti pozitivni.")
+    zahtevano = ticker
+    ticker = eur_ticker(ticker)  # vedno kupi kotacijo v EUR, če obstaja
     instr = instrument(ticker)
-    if not instr:
-        raise T212Napaka(f"ticker {ticker} ne obstaja. Uporabi: python t212_trgovanje.py najdi <ISIN>")
     valuta = instr.get("currencyCode") or instr.get("currency")
     if valuta != "EUR":
         raise T212Napaka(f"{ticker} kotira v {valuta}, bot kupuje samo instrumente v EUR.")
@@ -180,6 +232,8 @@ def kupi(ticker, kolicina, limitna_cena, gtc=False, potrdi=False):
         raise T212Napaka(f"nakup bi stal do {strosek:.2f} EUR, v proračunu je še {ostane:.2f} EUR "
                          f"(skupaj {proracun():.2f}, porabljeno {porabljeno(d):.2f}).")
     opis = f"NAKUP {kolicina} x {ticker} po največ {limitna_cena} EUR = do {strosek:.2f} EUR"
+    if zahtevano != ticker:
+        opis += f" (namesto {zahtevano} kupim EUR kotacijo)"
     if not potrdi:
         return f"(suho) {opis}. Proračun po nakupu: {ostane - strosek:.2f} EUR. Za oddajo dodaj --potrdi."
 
@@ -199,7 +253,9 @@ def kupi(ticker, kolicina, limitna_cena, gtc=False, potrdi=False):
         raise
     zapis["id"] = odgovor.get("id")
     shrani_dnevnik(d)
-    return f"ODDANO: {opis}. ID {zapis['id']}. Proračun še: {na_voljo(d):.2f} EUR."
+    rezultat = f"ODDANO: {opis}. ID {zapis['id']}. Proračun še: {na_voljo(d):.2f} EUR."
+    obvesti(f"Nakup {ticker}", rezultat)
+    return rezultat
 
 
 def prodaj(ticker, kolicina, potrdi=False):
@@ -225,7 +281,9 @@ def prodaj(ticker, kolicina, potrdi=False):
         raise
     zapis["id"] = odgovor.get("id")
     shrani_dnevnik(d)
-    return f"ODDANO: {opis}. ID {zapis['id']}."
+    rezultat = f"ODDANO: {opis}. ID {zapis['id']}."
+    obvesti(f"Prodaja {ticker}", rezultat)
+    return rezultat
 
 
 def preklici(id_narocila, potrdi=False):
@@ -250,7 +308,9 @@ def preklici(id_narocila, potrdi=False):
     zapis["rezervirano_eur"] = round(napolnjeno * zapis["limit"], 2)
     zapis["preklican"] = _zdaj()
     shrani_dnevnik(d)
-    return f"PREKLICANO {id_narocila}. Napolnjeno {napolnjeno}, proračun še: {na_voljo(d):.2f} EUR."
+    rezultat = f"PREKLICANO {id_narocila}. Napolnjeno {napolnjeno}, proračun še: {na_voljo(d):.2f} EUR."
+    obvesti(f"Preklic {zapis['ticker']}", rezultat)
+    return rezultat
 
 
 def stanje():

@@ -39,6 +39,8 @@ Nakup in prodaja s trdimi varovalkami v kodi:
 - Bot za nakupe **skupaj porabi največ 500 EUR** (`BOT_PRORACUN_EUR` ga lahko samo zniža). Prodaje proračuna ne vračajo.
 - Nakup samo z **limitnim naročilom** za instrument v **EUR**; znesek (količina × limit) se rezervira, preden se naročilo odda.
 - Prodaja samo **delnic, ki jih je kupil bot** (napolnjeni nakupi minus prejšnje prodaje, največ toliko, kot je v poziciji). Ročno kupljenih ali prej obstoječih delnic ne proda.
+- Vedno kupi **kotacijo v EUR**: podaš lahko ISIN ali katerikoli ticker (npr. SMH na LSE v USD), bot poišče isti ETF v EUR. Če EUR kotacije ni, nakup zavrne.
+- Ob vsakem oddanem nakupu, prodaji ali preklicu pošlje **e-pošto na Gmail** (`GMAIL_USER` in `GMAIL_APP_PASSWORD` v `.env`; geslo je Google App Password, ne tvoje navadno geslo).
 - Brez `--potrdi` se nič ne odda, izpiše se le, kaj bi se zgodilo.
 - Dnevnik je v `bot_dnevnik.json` (ni v gitu). **Ne briši ga.**
 
@@ -47,7 +49,7 @@ Ključ mora imeti dovoljenje za naročila. Najprej preizkusi z `T212_OKOLJE=demo
 ```
 python t212_trgovanje.py najdi IE00BFZXGZ54           # poišči poln ticker
 python t212_trgovanje.py stanje                       # proračun in botove pozicije
-python t212_trgovanje.py kupi EQQBd_EQ 0.5 480 --potrdi
+python t212_trgovanje.py kupi IE00BMC38736 0.5 30 --potrdi   # ISIN ali ticker
 python t212_trgovanje.py prodaj EQQBd_EQ 0.5 --potrdi
 python t212_trgovanje.py preklici <id> --potrdi
 ```
