@@ -22,6 +22,7 @@ Zagon:
   python t212_trgovanje.py kupi IE00BMC38736 0.5 30.00 [--gtc] --potrdi   (ISIN ali ticker; vedno kupi EUR kotacijo)
   python t212_trgovanje.py prodaj EQQBd_EQ 0.5 --potrdi
   python t212_trgovanje.py preklici <id_narocila> --potrdi
+  python t212_trgovanje.py rocno IE00B53SZB19 0.225 1440.62   (zapiše ročni nakup iz aplikacije v proračun)
 
 Ticker je poln Trading 212 ticker (npr. EQQBd_EQ). Poiščeš ga z:
   python t212_trgovanje.py najdi IE00BFZXGZ54
@@ -48,9 +49,11 @@ EPS = 1e-9
 
 def preberi_dnevnik():
     if not os.path.exists(DNEVNIK):
-        return {"nakupi": [], "prodaje": []}
+        return {"nakupi": [], "prodaje": [], "rocni": []}
     with open(DNEVNIK, encoding="utf-8") as f:
-        return json.load(f)
+        d = json.load(f)
+    d.setdefault("rocni", [])  # ročni nakupi iz aplikacije: štejejo v proračun, bot jih ne prodaja
+    return d
 
 
 def shrani_dnevnik(d):
@@ -80,7 +83,8 @@ def proracun():
 def porabljeno(d=None):
     """Vsota rezervacij vseh botovih nakupov (konzervativno: tudi še nenapolnjenih)."""
     d = d or preberi_dnevnik()
-    return sum(n["rezervirano_eur"] for n in d["nakupi"])
+    return (sum(n["rezervirano_eur"] for n in d["nakupi"])
+            + sum(n["znesek_eur"] for n in d.get("rocni", [])))
 
 
 def na_voljo(d=None):
@@ -313,11 +317,27 @@ def preklici(id_narocila, potrdi=False):
     return rezultat
 
 
+def rocno(oznaka, kolicina, cena):
+    """Zapiše nakup, opravljen ročno v aplikaciji, da šteje v proračun 500 EUR. Nič ne odda."""
+    kolicina, cena = float(kolicina), float(cena)
+    if kolicina <= 0 or cena <= 0:
+        raise T212Napaka("količina in cena morata biti pozitivni.")
+    d = preberi_dnevnik()
+    zapis = {"oznaka": oznaka, "kolicina": kolicina, "cena": cena,
+             "znesek_eur": round(kolicina * cena, 2), "datum": _zdaj()[:10]}
+    d["rocni"].append(zapis)
+    shrani_dnevnik(d)
+    return f"Zapisan ročni nakup {kolicina} x {oznaka} = {zapis['znesek_eur']:.2f} EUR. Proračun še: {na_voljo(d):.2f} EUR."
+
+
 def stanje():
     d = preberi_dnevnik()
     vrstice = [f"Proračun: {proracun():.2f} EUR | porabljeno: {porabljeno(d):.2f} | na voljo: {na_voljo(d):.2f}"]
     for ticker in sorted({n["ticker"] for n in d["nakupi"]}):
         vrstice.append(f"- {ticker}: bot sme prodati {botova_kolicina(ticker, d)} kos")
+    for n in d.get("rocni", []):
+        vrstice.append(f"- {n['oznaka']}: ročno {n['kolicina']} kos po {n['cena']} EUR = {n['znesek_eur']:.2f} EUR "
+                       f"({n['datum']}, bot ga ne prodaja)")
     if len(vrstice) == 1:
         vrstice.append("Bot še ni nič kupil.")
     return "\n".join(vrstice)
@@ -335,6 +355,8 @@ def main(argumenti):
     ukaz = a[0].lower() if a else ""
     if ukaz == "stanje":
         print(stanje())
+    elif ukaz == "rocno" and len(a) == 4:
+        print(rocno(a[1], a[2], a[3]))
     elif ukaz == "najdi" and len(a) == 2:
         for i in najdi(a[1])[:20]:
             print(f"{i.get('ticker')} | {i.get('isin')} | {i.get('currencyCode')} | {i.get('name')}")
