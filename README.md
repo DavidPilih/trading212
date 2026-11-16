@@ -65,6 +65,21 @@ python t212_trgovanje.py preklici <id> --potrdi
 
 Če v `.env` izpolniš še `GMAIL_USER` in `GMAIL_APP_PASSWORD` (app password, ne pravo geslo), pošlje mail ob vsakem naročilu.
 
+## Predlog naročila (s telefona)
+
+Pregled pripravi `narocilo.json` (kaj kupiti, koliko kosov, limit, razlog). Potem samo:
+
+```
+run
+```
+
+Izpiše predlog, bot naredi suhi tek (proračun, EUR kotacija), nato vpraša `Izvedem? da/ne`.
+Ob `da` odda limitno naročilo, ob `ne` nič. V obeh primerih se predlog premakne v
+`narocila_arhiv/`, da se ne izvede dvakrat. Predlog po datumu `velja_do` poteče.
+Če kosi x limit preseže `znesek_eur` iz predloga, ga ne izvede.
+
+`run povzetek` pokaže stanje računa (prej je to delal sam `run`).
+
 ## Napake
 
 - `API_KEY ni nastavljen`: manjka ključ v `.env`

@@ -11,3 +11,7 @@ bot_dnevnik.json.tmp
 __pycache__/
 *.pyc
 .venv/
+
+# Predlogi narocil (pripravi jih pregled, izvede run)
+narocilo.json
+narocila_arhiv/
