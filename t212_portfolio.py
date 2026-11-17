@@ -5,6 +5,7 @@ t212_portfolio.py - preveri stanje Trading 212 računa (SAMO BRANJE).
 Vse funkcije pošiljajo le GET zahteve na uradni Trading 212 Public API:
   /equity/account/summary  -> gotovina, vrednost naložb, dobiček/izguba
   /equity/positions        -> odprte pozicije
+  /equity/history/orders   -> zgodovina naročil
 
 Ta datoteka sama ne oddaja naročil. Nakup in prodaja (z varovalkami) sta
 ločena v t212_trgovanje.py.
@@ -20,6 +21,7 @@ Zagon:
   python t212_portfolio.py gotovina     -> samo gotovina
   python t212_portfolio.py pozicije     -> samo pozicije
   python t212_portfolio.py pozicija EQQB    -> ena pozicija (ticker ali ISIN)
+  python t212_portfolio.py zgodovina [N]    -> zadnjih N naročil (privzeto 20)
   python t212_portfolio.py --shrani     -> povzetek še doda v stanje_t212.txt
 
 Uporablja samo standardno knjižnico Pythona (nič ni treba nameščati s pip).
@@ -31,7 +33,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 MAPA = os.path.dirname(os.path.abspath(__file__))
 
@@ -190,6 +192,49 @@ def preveri_pozicijo(oznaka, pozicije=None):
     return None
 
 
+def pridobi_zgodovino(n=20):
+    """Zadnjih n naročil (/equity/history/orders), največ 50 na stran, po potrebi več strani."""
+    rezultat = []
+    pot = f"/equity/history/orders?limit={min(max(n, 1), 50)}"
+    while pot and len(rezultat) < n:
+        odgovor = _get(pot) or {}
+        rezultat.extend(odgovor.get("items") or [])
+        naslednja = odgovor.get("nextPagePath")
+        pot = naslednja[len("/api/v0"):] if naslednja and naslednja.startswith("/api/v0") else naslednja
+    return [_razcleni_narocilo(x) for x in rezultat[:n]]
+
+
+def _razcleni_narocilo(x):
+    """Podpira novo obliko (order + fill) in staro (vse polja na vrhu)."""
+    o = x.get("order") or x
+    f = x.get("fill") or {}
+    vpliv = f.get("walletImpact") or {}
+    instr = o.get("instrument") or {}
+    kolicina = f.get("quantity") if f else None
+    if kolicina is None:
+        kolicina = o.get("filledQuantity") if o.get("filledQuantity") is not None else o.get("quantity")
+    stran = o.get("side")
+    if not stran and kolicina is not None:
+        stran = "SELL" if kolicina < 0 else "BUY"
+    return {
+        "id": o.get("id"),
+        "ticker": o.get("ticker") or instr.get("ticker", "?"),
+        "isin": instr.get("isin", ""),
+        "ime": instr.get("name", ""),
+        "tip": o.get("type", ""),
+        "status": o.get("status", ""),
+        "stran": stran,
+        "kolicina": abs(kolicina) if kolicina is not None else None,
+        "cena": f.get("price") if f else o.get("fillPrice"),
+        "limit": o.get("limitPrice"),
+        "znesek": vpliv.get("netValue") if vpliv else (o.get("fillCost") or o.get("filledValue")),
+        "valuta": vpliv.get("currency") or o.get("currency") or instr.get("currency", ""),
+        "fx": vpliv.get("fxRate"),
+        "ustvarjeno": o.get("createdAt") or o.get("dateCreated"),
+        "izvedeno": (f.get("filledAt") if f else None) or o.get("dateExecuted") or o.get("dateModified"),
+    }
+
+
 # --------------------------------------------------------------------------
 # Oblikovanje izpisa
 # --------------------------------------------------------------------------
@@ -254,6 +299,51 @@ def besedilo_pozicije(pozicije):
     return "Pozicije:\n" + "\n".join(besedilo_pozicija(p) for p in pozicije)
 
 
+def _v_utc(niz):
+    if not niz:
+        return None
+    try:
+        d = datetime.fromisoformat(niz.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _lokalno(d):
+    """UTC -> Europe/Ljubljana (zoneinfo, sicer ročno pravilo CET/CEST)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return d.astimezone(ZoneInfo("Europe/Ljubljana"))
+    except Exception:
+        def zadnja_nedelja(leto, mesec):
+            x = datetime(leto, mesec + 1, 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+            return x - timedelta(days=(x.weekday() + 1) % 7)
+        poletni = zadnja_nedelja(d.year, 3) <= d < zadnja_nedelja(d.year, 10)
+        return d.astimezone(timezone(timedelta(hours=2 if poletni else 1)))
+
+
+def besedilo_narocilo(n):
+    d = _v_utc(n["izvedeno"]) or _v_utc(n["ustvarjeno"])
+    cas = f"{_lokalno(d):%d. %m. %Y %H:%M:%S} LJ ({d:%H:%M:%S} UTC)" if d else "?"
+    stran = {"BUY": "nakup", "SELL": "prodaja"}.get(n["stran"], n["stran"] or "?")
+    s = (
+        f"{cas} | {kratek_ticker(n['ticker'])} [{n['ticker']}{', ' + n['isin'] if n['isin'] else ''}] | "
+        f"{stran} {n['tip'].lower()} | {st(n['kolicina'], 6)} kos @ {st(n['cena'], 4)} | "
+        f"znesek {st(n['znesek'])} {n['valuta']} | {n['status']}"
+    )
+    if n["limit"] is not None:
+        s += f" | limit {st(n['limit'], 4)}"
+    if n["fx"] not in (None, 1):
+        s += f" | fx {n['fx']}"
+    return s
+
+
+def besedilo_zgodovina(narocila):
+    if not narocila:
+        return "Zgodovina naročil: prazno"
+    return f"Zadnjih {len(narocila)} naročil (najnovejše prvo):\n" + "\n".join(besedilo_narocilo(n) for n in narocila)
+
+
 def povzetek():
     """Celoten povzetek računa kot besedilo (dva GET klica)."""
     racun = pridobi_racun()
@@ -288,6 +378,13 @@ def main(argumenti):
     elif ukaz == "pozicija" and len(argumenti) > 1:
         p = preveri_pozicijo(argumenti[1])
         izpis = besedilo_pozicija(p) if p else f"Pozicije {argumenti[1]} ni v portfelju."
+    elif ukaz == "zgodovina":
+        try:
+            n = int(argumenti[1]) if len(argumenti) > 1 else 20
+        except ValueError:
+            print("N mora biti celo število, npr. run zgodovina 30")
+            return 2
+        izpis = besedilo_zgodovina(pridobi_zgodovino(max(n, 1)))
     else:
         print(__doc__)
         return 2
